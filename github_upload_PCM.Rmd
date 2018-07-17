@@ -1,0 +1,139 @@
+This script performs cleans the entered dataset and conducts Rasch analysis and reliability testing of the P3CEQ
+
+
+```{r}
+library(eRm)
+library(tidyverse)
+library(pander)
+```
+
+import and clean data
+
+```{r}
+raw_data <- read.csv("file path goes here")
+
+Q_selector <-   raw_data %>%
+  select(starts_with("Q")) %>%
+  select(-Q9a, -Q12, -Q13, -Q14, -Q15, -Q16)
+
+# Score adjustment for Each Q
+A <- function(x) x - 1
+rescore <- data.frame (cbind(apply(Q_selector[1:ncol(Q_selector)],2, A)))
+rescore[rescore < 0] <- NA
+rescore[rescore == 98] <- 0
+rescore[rescore == 4] <- 3
+rescore[rescore > 4] <- NA
+rescore$Q05 <- (3 - rescore$Q05)
+
+cleandata <- rescore
+
+
+
+
+```
+
+
+```{r}
+qs <- cleandata
+qs <- cleandata %>% 
+  mutate(nmiss=rowSums(is.na(.))) %>% 
+  # remove where only 1 item available
+  filter(nmiss < (ncol(qs)-1)) %>% 
+  select(-nmiss) 
+
+write.csv(qs, "file path goes here")
+
+```
+
+
+
+
+```{r}
+
+# Runs the Partial Credit Model
+qs.no <- qs %>% select(Q01, Q02, Q03, Q05, Q06, Q07, Q08, Q09, Q10, Q11)
+qs.no.clean <- qs.no %>% 
+  mutate(nmiss=rowSums(is.na(.))) %>% 
+  # remove where only 1 item available
+  filter(nmiss < (ncol(qs.no)-1)) %>% 
+  select(-nmiss) 
+pcm.2 <- eRm::PCM(qs.no.clean)
+```
+
+
+
+```{r}
+# generate ICC plots
+plotICC(pcm.2, mplot = F, legpos = "right", ask = FALSE)
+```
+
+
+
+```{r}
+#generate PI plots
+pcm2.pp <- person.parameter(pcm.2)
+plotPImap(pcm.2, sorted = TRUE, pp=pcm2.pp)
+```
+
+
+
+Might be interesting to look at model fit:
+```{r}
+
+pres.pcm <- person.parameter(pcm.2)
+itemfit(pres.pcm)
+itemfit
+```
+
+
+some probabilities
+
+
+```{r}
+thresholds(pcm.2)
+```
+
+
+
+And this would enable you to recreate the ICC plots, but you can also identify the cut/transition points in terms of probilities by summarising:
+
+```{r}
+itemfit(pcm2.pp)
+pmat.df <- pmat(pcm2.pp) %>% as_data_frame()
+pmat.df.sums <- pmat.df %>% 
+  summarise_all(funs(mean(., na.rm=T))) %>% 
+  reshape2::melt() %>%
+  separate(variable, c("q", "item"))
+
+pmat.df.sums %>% 
+  reshape2::dcast(q~item) %>% 
+  pander
+```
+
+
+
+
+I think this is a useful plot to show where on the latent each question is adding information
+
+```{r}
+plotINFO(pcm.2, legpos = "right")
+```
+
+
+Plot PW map
+
+
+
+```{r}
+plotPWmap(pcm.2, imap=T)
+```
+
+
+reliability parameters
+
+```{r}
+# get reliability parameters
+SepRel(pres.pcm)
+```
+
+
