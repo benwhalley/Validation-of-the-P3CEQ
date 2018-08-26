@@ -14,6 +14,7 @@ This RMarkdown document documents the data cleaning and analysis of the P3CEQ re
 
 
 ```{r}
+set.seed(2018)
 chpt <- checkpoint::checkpoint("2018-07-01")
 library(eRm)
 library(tidyverse)
