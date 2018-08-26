@@ -8,75 +8,105 @@ output:
       collapsed: false
       smooth_scroll: false
 ---
-Install and load packages
+
+
+# Setup
+
+### Package requirements
+
+We use the checkpoint library to snapshot package versions:
 
 ```{r}
-#install.packages(c("eRm", "tidyverse","pander", "checkpoint"))
-require(eRm)
-require(tidyverse)
-require(pander)
-require(checkpoint)
+# chpt <- checkpoint::checkpoint("2018-07-01")
+library(eRm)
+library(tidyverse)
+library(pander)
 ```
 
-Checkpoint, import and clean data
+
+### Setup and data processing
+
+Import data:
 
 ```{r import}
-chpt <- checkpoint::checkpoint("2018-07-01")
-
-
-raw_data <- read.csv("C:/Users/bfosh/P3CEQ/tblIPC_LTC6.csv")
-
+# XXX BEN - note I have changed to use relative paths... this is best practice and makes it easier to replicate for others.
+raw_data <- read_csv("rawdata.csv")
 ```
 
 
 ```{r clean}
 # isolate items from data frame
-items <- raw_data %>% select(Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q8b, Q8c, Q8d,  Q9,  Q10, Q11)
+items <- raw_data %>% select(Q1, Q2, Q3, Q4, Q5, Q6, Q7, Q8, Q8b, Q8c, Q8d, Q9, Q10, Q11)
 
-#check data starts from 0
+# check data starts from 0
+# XXX BEN YOU NEED TO EXPLAIN THIS CODE IN A COMMENT.. IT's weird-- why do this? Were some items recorded incorrectly? What 
 for(i in 1:ncol(items)){
   if(0%in%items[,i]==FALSE){
     items[, i] = items[,i] - 1
 }}
-
-#Rescore response 99 (don't know) to 0
-items[items >= 98] <- 0
-
-#rescore item 4 responses  to 3
-items$Q4[items$Q4 >3] <- 3
-
-# remove where only 1 item available
-qs <- items
-qs <- items %>% 
-  mutate(nmiss=rowSums(is.na(.))) %>% 
-  filter(nmiss < (ncol(qs)-1)) %>% 
-  select(-nmiss) 
-
-qs$q8new <- rowSums(qs[,c("Q8", "Q8b", "Q8c", "Q8d")], na.rm=TRUE) / 4
-
-qs$q8new <- round(qs$q8new,0)
-# Not sure how sprintf works
-#qs$q8new <-sprintf("%.3f", qs$q8new)
-
-write.csv(qs, "C:/Users/bfosh/P3CEQ/qs.csv")
-
 ```
 
 
-#Perform Partial Credit Rasch Analysis
 
 
-```{r pcm}
+XXX WHAT about cases where you subtracted one from the column above... does this interact with the code below? Would seem to create an off-by-one for some columns?
 
-# Runs the Partial Credit Model
+```{r}
+# Rescore response 99 (don't know) to 0
+items[items >= 98] <- 0
+
+# Rescore item 4 responses  to 3
+items$Q4[items$Q4 >3] <- 3
+```
+
+
+Remove rows where only 1 item available:
+
+```{r}
+qs <- items %>% 
+  filter(rowSums(is.na(.)) < (ncol(items)-1)) %>% 
+  # take mean of Q8 items a different way - see below
+  mutate(q8newALT = rowMeans(select(., Q8, Q8b, Q8c, Q8d), na.rm=T))
+```
+
+XXX Could do with a comment here explainign why these questions combined
+XXX BEN -  I'm also concerned about this line unless it's deliberate:
+```{r}
+qs$q8new <- rowSums(qs[,c("Q8", "Q8b", "Q8c", "Q8d")], na.rm=TRUE) / 4
+```
+
+XXX The issue here is that you are summing then dividing by 4 to average, which effectively imputes a zero for the missing items. Is this what is wanted? the `q8newALT` variable above is the true mean of the available data, and this would create more missing values.
+
+XXX See there is a real difference in computed score:
+
+```{r}
+round(qs$q8new, 0)-qs$q8newALT
+```
+
+
+Write out transformed data:
+
+```{r}
+write.csv(qs, "qs.csv")
+```
+
+
+# Partial Credit Models
+
+Runs the Partial Credit Model:
+
+```{r pcm, cache=T}
 qs.no <- qs %>% select(Q1, Q2, Q3, Q5, Q6, Q9, Q10, Q11)
 qs.no.clean <- qs.no %>% 
   mutate(nmiss=rowSums(is.na(.))) %>% 
   # remove where only 1 item available
+  # XXX haven't you already done this above? Perhaps remove 2 lines below
   filter(nmiss < (ncol(qs.no)-1)) %>% 
   select(-nmiss) 
+
 pcm.2 <- eRm::PCM(qs.no.clean)
 ```
+
 
 ICC plots
 
@@ -85,75 +115,73 @@ ICC plots
 plotICC(pcm.2, mplot = F, legpos = "right", ask = FALSE)
 ```
 
-PI Plots
+
+PI Plots:
 
 ```{r PI}
-#get PI plots
 pcm2.pp <- person.parameter(pcm.2)
 plotPImap(pcm.2, sorted = TRUE, pp=pcm2.pp)
 ```
 
 
-
 Model fit:
-```{r fit}
 
+```{r fit}
 pres.pcm <- person.parameter(pcm.2)
-itemfit(pres.pcm)
-itemfit
+print(itemfit(pres.pcm), visible=F) %>% 
+  broom::tidy() %>% 
+  rename(Question=.rownames) %>% 
+  pander()
 ```
 
 
-Extract item thresholds
-
+Extract item thresholds:
 
 ```{r thresholds}
-thresholds(pcm.2)
+pcm2.thlds <- thresholds(pcm.2)
+pcm2.thlds$threshtable[[1]] %>% broom::tidy() %>% 
+    rename(Question=.rownames) %>% pander()
 ```
 
 
-Summarising ICC plots with transition points
+Summarise ICC plots with transition points:
 
 ```{r ICC_summarise}
-itemfit(pcm2.pp)
-pmat.df <- pmat(pcm2.pp) %>% as_data_frame()
-pmat.df.sums <- pmat.df %>% 
+pmat.df <- pmat(pcm2.pp) %>% 
+  as_data_frame()
+
+pmat.df %>% 
   summarise_all(funs(mean(., na.rm=T))) %>% 
   reshape2::melt() %>%
-  separate(variable, c("q", "item"))
-
-pmat.df.sums %>% 
-  reshape2::dcast(q~item) %>% 
-  pander
+  separate(variable, c("q", "item")) %>% 
+  reshape2::dcast(q~item) %>%
+  rename(Question = q) %>% 
+  setNames(names(.) %>% str_replace(., "c(\\d)", "Threshold \\1")) %>% 
+  arrange(as.numeric(str_replace(Question, "Q", ""))) %>% 
+  pander()
 ```
 
 
-
-
-Identify where items add latent information
+Identify where items add latent information:
 
 ```{r latent_plot }
 plotINFO(pcm.2, legpos = "right")
 ```
 
 
-PLot PW map
+Plot PW map:
 
 ```{r PWmap}
 plotPWmap(pcm.2, imap=T)
 ```
 
 
-Reliability parameters
+Separation reliability:
 
 ```{r reliability}
-# get reliability parameters
 SepRel(pres.pcm)
 ```
 
 
-```{r render}
-# not rendering - unsure how pander worked, this was my poor attempt to render in html
-rmarkdown::render("pcm.rmd", output_dir = "C:/Users/bfosh/P3CEQ/html")
-```
 
+Note XXX to render simpler to just hit Shift Ctrk - K in RStudio... better than including this code here
